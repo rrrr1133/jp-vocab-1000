@@ -109,6 +109,8 @@ body.has-hero{
 .topbar .title{flex:1;}
 .topbar .title .t1{font-size:14px;font-weight:800;}
 .topbar .title .t2{font-size:11px;color:var(--muted);}
+.star-btn{color:#c8a24a;font-size:19px;}
+.star-btn.active{background:#fff6df;border-color:#f2b134;color:#e6a412;}
 
 .dots{display:flex;gap:5px;justify-content:center;margin:6px 0 18px;flex-wrap:wrap;}
 .dot{width:7px;height:7px;border-radius:50%;background:var(--line);}
@@ -166,6 +168,12 @@ body.has-hero{
 .celebrate p{color:var(--muted);font-size:13px;margin:0 0 20px;}
 
 .footer-note{text-align:center;color:var(--muted);font-size:11px;margin-top:24px;}
+.empty-note{text-align:center;color:var(--muted);font-size:13px;padding:26px 10px;line-height:1.6;}
+.fav-row{display:flex;align-items:center;justify-content:space-between;padding:12px 10px;border-radius:12px;margin-bottom:8px;background:var(--bg);}
+.fav-row .word{display:flex;flex-direction:column;gap:3px;}
+.fav-row .word .jp{font-size:15px;font-weight:700;}
+.fav-row .word .kr{font-size:12px;color:var(--muted);}
+.fav-row .unstar{font-size:18px;color:#e6a412;cursor:pointer;flex-shrink:0;padding:4px 6px;}
 </style>
 </head>
 <body>
@@ -188,11 +196,12 @@ body.has-hero{
   function loadState(){
     try{
       var raw = localStorage.getItem(STORAGE_KEY);
-      if(!raw) return {completedPages:{}};
+      if(!raw) return {completedPages:{}, favorites:{}};
       var parsed = JSON.parse(raw);
       if(!parsed.completedPages) parsed.completedPages = {};
+      if(!parsed.favorites) parsed.favorites = {};
       return parsed;
-    }catch(e){ return {completedPages:{}}; }
+    }catch(e){ return {completedPages:{}, favorites:{}}; }
   }
   function saveState(){
     try{ localStorage.setItem(STORAGE_KEY, JSON.stringify(state)); }catch(e){}
@@ -231,6 +240,24 @@ body.has-hero{
   function pageWordRange(pIdx){
     var w = PAGES[pIdx].words;
     return w[0].no + '-' + w[w.length-1].no;
+  }
+
+  function isFav(no){ return !!state.favorites[no]; }
+  function toggleFav(no){
+    if(state.favorites[no]) delete state.favorites[no];
+    else state.favorites[no] = true;
+    saveState();
+  }
+  function favoriteWords(){
+    var out=[];
+    PAGES.forEach(function(p){
+      p.words.forEach(function(w){ if(isFav(w.no)) out.push(w); });
+    });
+    return out;
+  }
+  function favoritesCount(){
+    var c=0; for(var k in state.favorites) if(state.favorites[k]) c++;
+    return c;
   }
 
   var app = document.getElementById('app');
@@ -277,6 +304,9 @@ body.has-hero{
     var browseBtn = el('button','cta-btn secondary','📖 전체 목차 보기');
     browseBtn.onclick = function(){ navigate({view:'toc'}); };
     pcard.appendChild(browseBtn);
+    var favBtn = el('button','cta-btn secondary','⭐ 즐겨찾기 모아보기 ('+favoritesCount()+')');
+    favBtn.onclick = function(){ navigate({view:'favorites'}); };
+    pcard.appendChild(favBtn);
     app.appendChild(pcard);
 
     app.appendChild(el('div','section-title','📅 학습 캘린더'));
@@ -367,24 +397,20 @@ body.has-hero{
     }
   }
 
-  // ---------- STUDY (FLASHCARD) VIEW ----------
-  function renderStudy(pageIdx, fromCtx){
+  // ---------- SHARED FLASHCARD DECK RENDERER ----------
+  // words: array of word objects. cfg: {routeKey, titleHTML, onBack, showDoneButton, doneLabel, onDone, onLast}
+  function renderDeck(words, cfg){
     app.innerHTML = '';
-    var p = PAGES[pageIdx];
     var wIdx = 0;
     var flipped = false;
 
     var topbar = el('div','topbar');
     var back = el('div','iconbtn','←');
-    back.onclick = function(){
-      if(fromCtx && fromCtx.from==='day') navigate({view:'day', day:fromCtx.day});
-      else if(fromCtx && fromCtx.from==='toc') navigate({view:'toc'});
-      else navigate({view:'home'});
-    };
+    back.onclick = cfg.onBack;
     topbar.appendChild(back);
-    topbar.appendChild(el('div','title',
-      '<div class="t1"><span class="pos-pill '+POS_CLASS[p.pos]+'">'+p.pos+'</span></div>'+
-      '<div class="t2">'+(pageIdx+1)+'쪽 · '+p.words[0].no+'-'+p.words[p.words.length-1].no+'번</div>'));
+    topbar.appendChild(el('div','title', cfg.titleHTML));
+    var starBtn = el('div','iconbtn star-btn','☆');
+    topbar.appendChild(starBtn);
     app.appendChild(topbar);
 
     var dotsWrap = el('div','dots');
@@ -406,22 +432,31 @@ body.has-hero{
     navRow.appendChild(nextBtn);
     app.appendChild(navRow);
 
-    var doneBtn = el('button','cta-btn btn-done','✓ 이 쪽 학습 완료');
-    doneBtn.style.marginTop='14px';
-    app.appendChild(doneBtn);
+    var doneBtn = null;
+    if(cfg.showDoneButton){
+      doneBtn = el('button','cta-btn btn-done', cfg.doneLabel);
+      doneBtn.style.marginTop='14px';
+      app.appendChild(doneBtn);
+    }
 
     function colorFor(pos){ return getComputedStyle(document.documentElement).getPropertyValue(POS_COLOR_VAR[pos]).trim(); }
 
     function renderDots(){
       dotsWrap.innerHTML='';
-      p.words.forEach(function(_, i){
+      words.forEach(function(_, i){
         var d = el('span','dot'+(i===wIdx?' current':(i<wIdx?' seen':'')));
         dotsWrap.appendChild(d);
       });
     }
 
+    function renderStar(){
+      var fav = isFav(words[wIdx].no);
+      starBtn.textContent = fav ? '★' : '☆';
+      starBtn.classList.toggle('active', fav);
+    }
+
     function renderCard(){
-      var w = p.words[wIdx];
+      var w = words[wIdx];
       flipped = false;
       card.classList.remove('flipped');
       var visual = w.emoji
@@ -440,44 +475,32 @@ body.has-hero{
         '</div>'+
         '<div class="tap-hint">👆 탭해서 다시 보기</div>';
       renderDots();
+      renderStar();
       prevBtn.disabled = (wIdx===0);
       prevBtn.style.opacity = prevBtn.disabled ? .4 : 1;
-      nextBtn.textContent = (wIdx===p.words.length-1) ? '마지막 단어 ✓' : '다음 →';
+      nextBtn.textContent = (wIdx===words.length-1) ? '마지막 단어 ✓' : '다음 →';
     }
 
     card.onclick = function(){
       flipped = !flipped;
       card.classList.toggle('flipped', flipped);
     };
+    starBtn.onclick = function(e){
+      e.stopPropagation();
+      toggleFav(words[wIdx].no);
+      renderStar();
+      toast(isFav(words[wIdx].no) ? '⭐ 즐겨찾기에 추가했어요' : '즐겨찾기에서 제거했어요');
+    };
     prevBtn.onclick = function(e){ e.stopPropagation(); if(wIdx>0){ wIdx--; renderCard(); } };
     nextBtn.onclick = function(e){
       e.stopPropagation();
-      if(wIdx < p.words.length-1){ wIdx++; renderCard(); }
-      else {
-        toast('👏 이 쪽의 단어를 모두 살펴봤어요');
-      }
+      if(wIdx < words.length-1){ wIdx++; renderCard(); }
+      else if(cfg.onLast){ cfg.onLast(); }
     };
-    doneBtn.onclick = function(){
-      state.completedPages[pageIdx] = true;
-      saveState();
-      toast('✅ '+(pageIdx+1)+'쪽 학습 완료로 저장했어요');
-      // auto-advance within same day context if possible
-      if(fromCtx && fromCtx.from==='day'){
-        var pp = dayPages(fromCtx.day);
-        var idxInDay = pp.indexOf(pageIdx);
-        if(idxInDay>-1 && idxInDay+1<pp.length){
-          navigate({view:'study', page:pp[idxInDay+1], from:'day', day:fromCtx.day});
-          return;
-        }
-        navigate({view:'day', day:fromCtx.day});
-        return;
-      }
-      if(fromCtx && fromCtx.from==='toc'){ navigate({view:'toc'}); return; }
-      navigate({view:'home'});
-    };
+    if(doneBtn) doneBtn.onclick = cfg.onDone;
 
     document.onkeydown = function(ev){
-      if(route.view!=='study') return;
+      if(route.view!==cfg.routeKey) return;
       if(ev.key==='ArrowRight') nextBtn.onclick(ev);
       if(ev.key==='ArrowLeft') prevBtn.onclick(ev);
       if(ev.key===' '){ ev.preventDefault(); card.click(); }
@@ -486,12 +509,95 @@ body.has-hero{
     renderCard();
   }
 
+  // ---------- STUDY (FLASHCARD) VIEW ----------
+  function renderStudy(pageIdx, fromCtx){
+    var p = PAGES[pageIdx];
+    renderDeck(p.words, {
+      routeKey: 'study',
+      titleHTML:
+        '<div class="t1"><span class="pos-pill '+POS_CLASS[p.pos]+'">'+p.pos+'</span></div>'+
+        '<div class="t2">'+(pageIdx+1)+'쪽 · '+p.words[0].no+'-'+p.words[p.words.length-1].no+'번</div>',
+      onBack: function(){
+        if(fromCtx && fromCtx.from==='day') navigate({view:'day', day:fromCtx.day});
+        else if(fromCtx && fromCtx.from==='toc') navigate({view:'toc'});
+        else if(fromCtx && fromCtx.from==='favorites') navigate({view:'favorites'});
+        else navigate({view:'home'});
+      },
+      showDoneButton: true,
+      doneLabel: '✓ 이 쪽 학습 완료',
+      onDone: function(){
+        state.completedPages[pageIdx] = true;
+        saveState();
+        toast('✅ '+(pageIdx+1)+'쪽 학습 완료로 저장했어요');
+        // auto-advance within same day context if possible
+        if(fromCtx && fromCtx.from==='day'){
+          var pp = dayPages(fromCtx.day);
+          var idxInDay = pp.indexOf(pageIdx);
+          if(idxInDay>-1 && idxInDay+1<pp.length){
+            navigate({view:'study', page:pp[idxInDay+1], from:'day', day:fromCtx.day});
+            return;
+          }
+          navigate({view:'day', day:fromCtx.day});
+          return;
+        }
+        if(fromCtx && fromCtx.from==='toc'){ navigate({view:'toc'}); return; }
+        navigate({view:'home'});
+      },
+      onLast: function(){ toast('👏 이 쪽의 단어를 모두 살펴봤어요'); }
+    });
+  }
+
+  // ---------- FAVORITES VIEW ----------
+  function renderFavorites(){
+    var favs = favoriteWords();
+    app.innerHTML = '';
+    var topbar = el('div','topbar');
+    var back = el('div','iconbtn','←'); back.onclick=function(){ navigate({view:'home'}); };
+    topbar.appendChild(back);
+    topbar.appendChild(el('div','title','<div class="t1">⭐ 즐겨찾기</div><div class="t2">저장된 단어 '+favs.length+'개</div>'));
+    app.appendChild(topbar);
+
+    if(favs.length===0){
+      var empty = el('div','day-detail');
+      empty.appendChild(el('div','empty-note','아직 즐겨찾기한 단어가 없어요.<br>단어 카드 학습 중 상단의 ☆ 버튼을 눌러 저장해보세요.'));
+      app.appendChild(empty);
+      return;
+    }
+
+    var startBtn = el('button','cta-btn','▶ 즐겨찾기 단어 학습하기');
+    startBtn.onclick = function(){
+      renderDeck(favs, {
+        routeKey: 'favorites',
+        titleHTML: '<div class="t1">⭐ 즐겨찾기</div><div class="t2">저장된 단어 '+favs.length+'개</div>',
+        onBack: function(){ renderFavorites(); },
+        showDoneButton: false,
+        onLast: function(){ toast('⭐ 즐겨찾기 단어를 모두 살펴봤어요'); }
+      });
+    };
+    app.appendChild(startBtn);
+
+    var list = el('div','day-detail');
+    list.style.marginTop = '14px';
+    favs.forEach(function(w){
+      var row = el('div','fav-row');
+      var left = el('div','word');
+      left.innerHTML = '<div class="jp">'+w.jp+' <span style="color:var(--muted);font-weight:400;">'+w.reading+'</span></div><div class="kr">'+w.kr+'</div>';
+      var unstar = el('div','unstar','★');
+      unstar.onclick = function(){ toggleFav(w.no); renderFavorites(); };
+      row.appendChild(left);
+      row.appendChild(unstar);
+      list.appendChild(row);
+    });
+    app.appendChild(list);
+  }
+
   function render(){
     document.body.classList.toggle('has-hero', route.view==='home');
     if(route.view==='home') renderHome();
     else if(route.view==='toc') renderToc();
     else if(route.view==='day') renderDay(route.day);
     else if(route.view==='study') renderStudy(route.page, {from:route.from, day:route.day});
+    else if(route.view==='favorites') renderFavorites();
     else renderHome();
   }
 
